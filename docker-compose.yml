@@ -1,0 +1,158 @@
+version: "3.9"
+
+# =============================================================
+# ECOMMERCE PIPELINE — Docker Compose
+# Serviços: PostgreSQL · pgAdmin · Airflow · Python (pipeline)
+# =============================================================
+# Comandos úteis:
+#   Subir tudo:        docker compose up -d
+#   Gerar dados:       docker compose run --rm pipeline python ingestion/generator.py --events 50
+#   Parar tudo:        docker compose down
+#   Resetar volumes:   docker compose down -v
+# =============================================================
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.9.0
+  env_file: .env
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${AIRFLOW_DB}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+    _PIP_ADDITIONAL_REQUIREMENTS: "dbt-core dbt-postgres faker psycopg2-binary polars python-dotenv scikit-learn pyarrow"
+    PYTHONPATH: /opt/airflow
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./ingestion:/opt/airflow/ingestion
+    - ./processing:/opt/airflow/processing
+    - ./sql:/opt/airflow/sql
+    - ./data:/opt/airflow/data
+    - ./dbt:/opt/airflow/dbt
+    - ./ml:/opt/airflow/ml
+    - airflow_logs:/opt/airflow/logs
+  depends_on:
+    postgres:
+      condition: service_healthy
+  networks:
+    - pipeline_net
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: pipeline_postgres
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pipeline_net
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4:8.6
+    container_name: pipeline_pgadmin
+    env_file: .env
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./pgadmin/servers.json:/pgadmin4/servers.json
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - pipeline_net
+    restart: unless-stopped
+
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile.pipeline
+    container_name: pipeline_python
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+    volumes:
+      - ./ingestion:/app/ingestion
+      - ./processing:/app/processing
+      - ./sql:/app/sql
+      - ./data:/app/data
+      - ./dbt:/app/dbt
+      - ./ml:/app/ml
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - pipeline_net
+    command: ["tail", "-f", "/dev/null"]
+    restart: unless-stopped
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: pipeline_airflow_init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username ${AIRFLOW_USER} \
+          --password ${AIRFLOW_PASSWORD} \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email ${AIRFLOW_EMAIL} || true
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: pipeline_airflow_webserver
+    command: webserver
+    ports:
+      - "8080:8080"
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: pipeline_airflow_scheduler
+    command: scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  pgadmin_data:
+  airflow_logs:
+
+networks:
+  pipeline_net:
+    driver: bridge

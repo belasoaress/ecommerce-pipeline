@@ -1,0 +1,32 @@
+# Ambiente
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.egg-info/
+
+# dbt
+dbt/ecommerce_gold/target/
+dbt/ecommerce_gold/logs/
+dbt/ecommerce_gold/dbt_packages/
+
+# Dados gerados (não commitar JSONs de eventos)
+data/raw/
+data/bronze/
+data/silver/
+data/gold/
+
+# Power BI
+dashboard/*.pbix
+
+# Logs do Airflow
+logs/
+
+# VS Code
+.vscode/
+
+# dbt — arquivo gerado automaticamente com ID de usuário
+dbt/**/.user.yml
