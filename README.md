@@ -234,6 +234,93 @@ dbt traz versionamento, testes automáticos (unicidade, not_null, accepted_value
 
 ---
 
+## 🐛 Problemas encontrados durante o desenvolvimento
+
+**1. Surrogate keys duplicadas na `dim_product`**
+
+Ao conectar o Power BI, o relacionamento `fact_orders → dim_product`
+falhou com erro de cardinalidade muitos-para-muitos. Investigando no
+pgAdmin, identifiquei que o mesmo `product_id` aparecia com múltiplas
+linhas na dimensão, o `generate_surrogate_key` gerava o mesmo hash
+para o mesmo produto, mas o `GROUP BY product_id, product_name, category`
+criava linhas extras por variações mínimas de preço entre lotes.
+
+Solução: adicionei uma CTE `deduped` com `ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY last_seen_at DESC)` e filtrei `WHERE rn = 1`.
+
+```sql
+-- Antes: GROUP BY gerava duplicatas
+group by product_id, product_name, category
+
+-- Depois: deduplicação explícita
+deduped as (
+    select *,
+        row_number() over (
+            partition by product_id
+            order by last_seen_at desc
+        ) as rn
+    from source
+)
+select ... from deduped where rn = 1
+```
+
+---
+
+**2. `stddev()` retornando NULL e quebrando `is_anomalia`**
+
+O KPI de volume por hora calculava `is_anomalia` comparando o total de
+pedidos com `média + 2 * desvio_padrão`. Em dias com apenas uma hora de
+dados, `stddev()` retorna NULL no PostgreSQL (comportamento correto
+matematicamente), o que fazia `is_anomalia` ficar NULL em vez de `false`.
+
+Isso só apareceu quando rodei `dbt test` e percebi que a coluna tinha
+valores nulos onde não deveria.
+
+Solução: `COALESCE(stddev(...), 0)` para tratar a partição de linha única.
+
+```sql
+-- Antes: NULL propagava para is_anomalia
+stddev(total_pedidos) over (partition by data) as desvio_pedidos_dia
+
+-- Depois: desvio zero quando há só uma linha
+COALESCE(stddev(total_pedidos) over (partition by data), 0) as desvio_pedidos_dia
+```
+
+---
+
+**3. `generate_series` quebrando na primeira run com Silver vazia**
+
+Na primeira execução do pipeline, a `dim_date` falhava com erro
+`invalid input syntax for type date` porque `min(order_ts)` retornava
+NULL (Silver ainda sem dados), e `generate_series(NULL, NULL, interval '1 day')`
+não é válido no PostgreSQL.
+
+Solução: `COALESCE` com `current_date` como fallback.
+
+```sql
+-- Antes: NULL quebrava o generate_series
+(select date_trunc('day', min(order_ts)) from silver.orders_clean)
+
+-- Depois: current_date como fallback seguro
+COALESCE(
+    (select date_trunc('day', min(order_ts)) from silver.orders_clean),
+    current_date
+)
+```
+
+---
+
+**4. Prophet incompatível com Polars moderno**
+
+Ao tentar usar Prophet para previsão de demanda, o modelo falhava com
+`TypeError: read_csv() got an unexpected keyword argument 'infer_schema'`
+porque o `cmdstanpy` (dependência interna do Prophet) usava uma API
+antiga do Polars que foi removida na versão 0.20+.
+
+Solução: migrei para `LinearRegression` do scikit-learn, que não tem
+conflitos de dependência e é suficiente para o volume de dados do projeto.
+O modelo treina em <1s e gera previsões com intervalo de confiança baseado
+nos resíduos do treino.
+
 ## 📄 Licença
 
 MIT — sinta-se livre para usar, adaptar e melhorar.
