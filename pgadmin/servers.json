@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Pipeline Local",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "ecommerce",
+      "Username": "pipeline_user",
+      "SSLMode": "prefer",
+      "Comment": "Banco principal do pipeline — schemas bronze, silver e gold"
+    }
+  }
+}
