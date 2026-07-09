@@ -1,0 +1,20 @@
+name: ecommerce_gold
+version: "1.0.0"
+
+profile: ecommerce_gold
+
+model-paths: ["models"]
+test-paths:  ["tests"]
+docs-paths:  ["docs"]
+
+target-path:    "target"
+clean-targets:  ["target", "dbt_packages"]
+
+models:
+  ecommerce_gold:
+    dimensions:
+      +materialized: table
+    facts:
+      +materialized: table
+    kpis:
+      +materialized: table

@@ -1,0 +1,32 @@
+version: 2
+
+sources:
+  - name: silver
+    schema: silver
+    description: "Camada Silver — dados limpos e validados pelo pipeline Polars"
+    tables:
+      - name: orders_clean
+        description: "Pedidos válidos após aplicação das 10 regras de qualidade"
+        columns:
+          - name: order_id
+            description: "Identificador único do pedido"
+          - name: customer_id
+            description: "Identificador do cliente"
+          - name: product_id
+            description: "Identificador do produto"
+          - name: category
+            description: "Categoria normalizada do produto"
+          - name: price
+            description: "Preço unitário validado"
+          - name: quantity
+            description: "Quantidade (sempre > 0 após Silver)"
+          - name: total_value
+            description: "Receita total recalculada (price * quantity)"
+          - name: status
+            description: "Status do pedido: completed, pending, cancelled, unknown"
+          - name: order_ts
+            description: "Timestamp do pedido em UTC"
+          - name: payment_method
+            description: "Método de pagamento"
+          - name: region
+            description: "Região do cliente"

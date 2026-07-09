@@ -1,0 +1,92 @@
+version: 2
+
+models:
+  # ----------------------------------------------------------------
+  # DIMENSÕES
+  # ----------------------------------------------------------------
+  - name: dim_product
+    description: "Dimensão de produtos com métricas agregadas de vendas"
+    columns:
+      - name: product_sk
+        description: "Surrogate key (hash MD5 do product_id)"
+        data_tests:
+          - unique
+          - not_null
+      - name: product_id
+        data_tests:
+          - unique
+          - not_null
+      - name: category
+        data_tests:
+          - not_null
+
+  - name: dim_customer
+    description: "Dimensão de clientes com segmentação RFM simplificada"
+    columns:
+      - name: customer_sk
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_segment
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["novo", "recorrente", "vip"]
+
+  - name: dim_date
+    description: "Dimensão de datas gerada por SQL puro"
+    columns:
+      - name: date_id
+        data_tests:
+          - unique
+          - not_null
+      - name: day_of_week
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [0, 1, 2, 3, 4, 5, 6]
+
+  # ----------------------------------------------------------------
+  # FATO
+  # ----------------------------------------------------------------
+  - name: fact_orders
+    description: "Tabela fato central — 1 linha por pedido"
+    columns:
+      - name: order_sk
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        data_tests:
+          - unique
+          - not_null
+      - name: total_value
+        data_tests:
+          - not_null
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["completed", "pending", "cancelled", "unknown"]
+
+  # ----------------------------------------------------------------
+  # KPIs
+  # ----------------------------------------------------------------
+  - name: kpi_ticket_medio_por_categoria
+    description: "Ticket médio e receita por categoria e produto, por dia"
+
+  - name: kpi_volume_pedidos_por_hora
+    description: "Volume de pedidos por hora — detecta picos e anomalias"
+    columns:
+      - name: periodo_dia
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["manha", "almoco", "tarde", "noite", "madrugada"]
+
+  - name: kpi_taxa_cancelamento
+    description: "Taxa de cancelamento por categoria, região e método de pagamento"
