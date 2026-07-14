@@ -1,6 +1,7 @@
 # 🛒 E-commerce Data Pipeline
 
 ![Pipeline Status](https://img.shields.io/badge/pipeline-passing-brightgreen)
+![dbt CI](https://github.com/belasoaress/ecommerce-pipeline/actions/workflows/dbt_ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![Airflow](https://img.shields.io/badge/airflow-2.9.0-017CEE)
 ![dbt](https://img.shields.io/badge/dbt-1.11-FF694B)
