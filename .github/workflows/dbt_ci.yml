@@ -1,0 +1,162 @@
+name: dbt CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "dbt/**"
+      - "processing/**"
+      - ".github/workflows/dbt_ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "dbt/**"
+      - "processing/**"
+
+jobs:
+  dbt-test:
+    name: Run dbt tests
+    runs-on: ubuntu-latest
+
+    # PostgreSQL como serviço — sobe junto com o job
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pipeline_user
+          POSTGRES_PASSWORD: pipeline_pass_ci
+          POSTGRES_DB: ecommerce
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: pipeline_user
+      POSTGRES_PASSWORD: pipeline_pass_ci
+      POSTGRES_DB: ecommerce
+
+    steps:
+      # 1. Clona o repositório
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. Python
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      # 3. Instala dependências
+      - name: Install dependencies
+        run: |
+          pip install dbt-core dbt-postgres psycopg2-binary polars python-dotenv scikit-learn pyarrow faker
+
+      # 4. Cria schemas e popula com dados mínimos para os testes
+      - name: Setup database schemas
+        run: |
+          psql postgresql://pipeline_user:pipeline_pass_ci@localhost:5432/ecommerce << 'SQL'
+            CREATE SCHEMA IF NOT EXISTS bronze;
+            CREATE SCHEMA IF NOT EXISTS silver;
+            CREATE SCHEMA IF NOT EXISTS gold;
+            GRANT ALL PRIVILEGES ON SCHEMA bronze TO pipeline_user;
+            GRANT ALL PRIVILEGES ON SCHEMA silver TO pipeline_user;
+            GRANT ALL PRIVILEGES ON SCHEMA gold   TO pipeline_user;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA bronze GRANT ALL ON TABLES TO pipeline_user;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA silver GRANT ALL ON TABLES TO pipeline_user;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA gold   GRANT ALL ON TABLES TO pipeline_user;
+          SQL
+
+      # 5. Gera dados mínimos para a Silver (dbt lê de silver.orders_clean)
+      - name: Seed Silver with test data
+        run: |
+          python - << 'EOF'
+          import os, psycopg2
+          conn = psycopg2.connect(
+              host="localhost", port=5432, dbname="ecommerce",
+              user="pipeline_user", password="pipeline_pass_ci"
+          )
+          cur = conn.cursor()
+          # Cria a tabela Silver mínima
+          cur.execute("""
+            CREATE TABLE IF NOT EXISTS silver.orders_clean (
+              id             BIGSERIAL PRIMARY KEY,
+              order_id       TEXT NOT NULL,
+              customer_id    TEXT NOT NULL,
+              customer_name  TEXT,
+              customer_email TEXT,
+              region         TEXT,
+              city           TEXT,
+              product_id     TEXT NOT NULL,
+              product_name   TEXT,
+              category       TEXT,
+              price          NUMERIC(10,2) NOT NULL,
+              quantity       INT NOT NULL,
+              total_value    NUMERIC(10,2) NOT NULL,
+              payment_method TEXT,
+              installments   INT,
+              status         TEXT NOT NULL,
+              order_ts       TIMESTAMPTZ,
+              source_file    TEXT,
+              bronze_id      BIGINT,
+              loaded_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS uidx_orders_clean_order_id
+              ON silver.orders_clean (order_id);
+          """)
+          # Insere 10 registros de teste variados
+          rows = [
+              (f"ORD{i:08d}", f"C{i:06d}", f"Cliente {i}", f"c{i}@test.com",
+               ["sudeste","sul","nordeste","centro_oeste","norte"][i%5],
+               "São Paulo",
+               f"P{(i%5)+1:03d}", ["Tenis","Camiseta","Mochila","Fone","Relogio"][i%5],
+               ["calcados","vestuario","acessorios","eletronicos","eletronicos"][i%5],
+               round(100 + i * 10.5, 2), (i%3)+1, round((100 + i*10.5)*((i%3)+1), 2),
+               ["pix","cartao_credito"][i%2], 1,
+               ["completed","pending","cancelled"][i%3],
+               f"2024-0{(i%9)+1}-{(i%28)+1:02d}T10:00:00+00:00",
+               "ci_seed.json", None)
+              for i in range(1, 11)
+          ]
+          cur.executemany("""
+            INSERT INTO silver.orders_clean
+              (order_id, customer_id, customer_name, customer_email, region, city,
+               product_id, product_name, category, price, quantity, total_value,
+               payment_method, installments, status, order_ts, source_file, bronze_id)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (order_id) DO NOTHING
+          """, rows)
+          conn.commit()
+          print(f"Inseridos {len(rows)} registros de teste na Silver.")
+          cur.close(); conn.close()
+          EOF
+
+      # 6. dbt deps (instala dbt-utils)
+      - name: dbt deps
+        working-directory: dbt/ecommerce_gold
+        run: dbt deps --profiles-dir . --project-dir .
+
+      # 7. dbt run
+      - name: dbt run
+        working-directory: dbt/ecommerce_gold
+        run: dbt run --profiles-dir . --project-dir . --target dev --no-partial-parse
+
+      # 8. dbt test
+      - name: dbt test
+        working-directory: dbt/ecommerce_gold
+        run: dbt test --profiles-dir . --project-dir . --no-partial-parse
+
+      # 9. Salva o relatório de testes como artefato
+      - name: Upload dbt artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbt-artifacts
+          path: dbt/ecommerce_gold/target/
+          retention-days: 7
