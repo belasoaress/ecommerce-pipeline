@@ -2,7 +2,7 @@
 dag_ecommerce_pipeline.py — DAG mestre do pipeline
 
 Orquestra tudo em sequência:
-  generate_data → ingest_bronze → process_silver → build_gold
+  generate_data → ingest_bronze → process_silver → build_gold → run_ml
 
 Schedule: a cada 15 minutos
 Robustez: retries, alertas de falha via log estruturado, sensor de saúde do banco
@@ -13,7 +13,6 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.operators.empty import EmptyOperator
 from airflow.sensors.sql import SqlSensor
-from datetime import datetime, timedelta
 import sys
 import os
 import logging
@@ -188,7 +187,7 @@ def task_log_pipeline_summary(**context):
 # -------------------------------------------------------------------
 with DAG(
     dag_id="ecommerce_pipeline",
-    description="Pipeline completo: generate → bronze → silver → gold",
+    description="Pipeline completo: generate → bronze → silver → gold → ml",
     default_args=DEFAULT_ARGS,
     schedule_interval="*/15 * * * *",   # a cada 15 minutos
     start_date=datetime(2024, 1, 1),
@@ -214,8 +213,9 @@ with DAG(
                   └── ingest_bronze   (JSON → bronze.orders_raw)
                         └── process_silver  (Polars — 10 regras de qualidade)
                               └── build_gold      (dbt run — star schema + KPIs)
-                                    └── log_summary
-                                          └── end
+                                    └── run_ml          (LinearRegression + IsolationForest)
+                                          └── log_summary
+                                                └── end
     ```
 
     ### Robustez
