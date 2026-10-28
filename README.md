@@ -1,6 +1,5 @@
 # 🛒 E-commerce Data Pipeline
 
-![Pipeline Status](https://img.shields.io/badge/pipeline-passing-brightgreen)
 ![dbt CI](https://github.com/belasoaress/ecommerce-pipeline/actions/workflows/dbt_ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![Airflow](https://img.shields.io/badge/airflow-2.9.0-017CEE)
@@ -56,11 +55,11 @@ Pipeline de dados **end-to-end** simulando um e-commerce near real-time — da i
 
 ```bash
 # 1. Clone o repositório
-git clone https://github.com/seu-usuario/ecommerce-pipeline.git
+git clone https://github.com/belasoaress/ecommerce-pipeline.git
 cd ecommerce-pipeline
 
 # 2. Configure as variáveis de ambiente
-cp .env.example .env   # edite as senhas se quiser
+cp env.example .env    # defina as senhas e gere as chaves do Airflow
 
 # 3. Suba tudo
 docker compose up -d
@@ -68,11 +67,11 @@ docker compose up -d
 
 Aguarde ~2 minutos e acesse:
 
-| Serviço | URL | Credencial |
+| Serviço | URL | Credencial (definida no `.env`) |
 |---------|-----|------------|
-| **Airflow** | http://localhost:8080 | admin / admin |
-| **pgAdmin** | http://localhost:5050 | admin@pipeline.dev / pgadmin_pass_123 |
-| **PostgreSQL** | localhost:5432 | pipeline_user / pipeline_pass_123 |
+| **Airflow** | http://localhost:8080 | `AIRFLOW_USER` / `AIRFLOW_PASSWORD` |
+| **pgAdmin** | http://localhost:5050 | `PGADMIN_EMAIL` / `PGADMIN_PASSWORD` |
+| **PostgreSQL** | localhost:5432 | `POSTGRES_USER` / `POSTGRES_PASSWORD` |
 
 ### Disparar o pipeline manualmente
 ```bash
@@ -114,10 +113,13 @@ start
 
 ```
 ecommerce-pipeline/
+├── .github/workflows/
+│   └── dbt_ci.yml                 # CI: dbt run + dbt test com PostgreSQL de serviço
 ├── dags/
 │   ├── dag_ecommerce_pipeline.py  # DAG mestre (orquestra tudo)
 │   ├── dag_bronze_ingest.py       # DAG Bronze standalone
-│   └── dag_silver_transform.py    # DAG Silver standalone
+│   ├── dag_silver_transform.py    # DAG Silver standalone
+│   └── dag_gold_dbt.py            # DAG Gold (dbt) standalone
 ├── ingestion/
 │   ├── generator.py               # Gerador de eventos fake
 │   └── bronze_ingest.py           # Ingestão Bronze
@@ -131,17 +133,23 @@ ecommerce-pipeline/
 │           └── kpis/              # kpi_ticket_medio, kpi_volume, kpi_cancelamento
 ├── ml/
 │   └── ml_demand_forecast.py      # LinearRegression + IsolationForest
+├── notebooks/
+│   └── eda.ipynb                  # Análise exploratória da Gold
 ├── sql/
-│   └── init.sql                   # Cria schemas bronze/silver/gold
-├── dashboard/
-│   └── dashboard_ecommerce.pbix   # Power BI Desktop
+│   ├── init.sql                   # Cria schemas bronze/silver/gold
+│   ├── create_tables.sql          # Tabelas Bronze/Silver
+│   └── business_queries.sql       # Perguntas de negócio sobre a Gold
+├── pgadmin/
+│   └── servers.json               # Conexão pré-configurada no pgAdmin
 ├── docs/
 │   ├── dashboard_preview.png
+│   ├── dashboard_ecommerce.pdf    # Dashboard Power BI exportado
+│   ├── eda_*.png                  # Gráficos da análise exploratória
 │   └── silver_quality_rules.md    # 10 regras de qualidade documentadas
 ├── docker-compose.yml
 ├── Dockerfile.pipeline
 ├── requirements.txt
-└── .env.example
+└── env.example                    # Modelo do .env
 ```
 
 ---
@@ -212,7 +220,7 @@ O ML está integrado ao pipeline como task nativa do Airflow — não é um note
 
 | Componente | Tecnologia | Por quê |
 |------------|-----------|---------|
-| Processamento | **Polars** | 5-10x mais rápido que Pandas, lazy evaluation, API expressiva |
+| Processamento | **Polars** | Lazy evaluation, execução paralela, API expressiva |
 | Orquestração | **Apache Airflow** | DAGs, retries, observabilidade, padrão de mercado |
 | Modelagem | **dbt** | SQL versionado, testes automáticos, documentação gerada |
 | Banco | **PostgreSQL** | JSONB para Bronze, schemas medallion, free e robusto |
@@ -225,7 +233,7 @@ O ML está integrado ao pipeline como task nativa do Airflow — não é um note
 ## 💡 Decisões técnicas
 
 **Por que Polars em vez de Pandas?**
-Polars usa Apache Arrow internamente e executa operações em paralelo por padrão. Para o volume deste projeto (~1k eventos/hora) a diferença é marginal, mas a escolha demonstra conhecimento de ferramentas modernas. Em datasets maiores (>1GB) a diferença é de 5-10x.
+Polars usa Apache Arrow internamente e executa operações em paralelo por padrão. Para o volume atual (até ~200 eventos/hora: 50 por run, a cada 15 minutos, no horário de pico) a diferença de desempenho em relação ao Pandas é desprezível; a escolha foi pensada para o crescimento: o mesmo código escala para volumes maiores sem reescrita, e a API de expressões deixa as 10 regras da Silver declarativas e fáceis de testar. O custo foi um ecossistema menor, que apareceu na prática (ver problema 4, incompatibilidade do Prophet).
 
 **Por que arquitetura Medallion (Bronze/Silver/Gold)?**
 Cada camada tem uma responsabilidade clara: Bronze garante auditabilidade (nada é perdido), Silver garante confiança (dado validado), Gold garante consumibilidade (dado modelado para o negócio). Isso permite reprocessar qualquer camada de forma independente sem perder histórico.
